@@ -3,7 +3,8 @@ import json
 
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv("bot.env")
+#print(os.environ)
 
 allowed_updaters = ["ngrok", "webserver", "polling"]
 
