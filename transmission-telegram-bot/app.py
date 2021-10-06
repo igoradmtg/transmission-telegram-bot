@@ -1,6 +1,5 @@
 import logging
 import time
-
 import telegram
 from telegram.ext import (
     CallbackContext,
@@ -19,6 +18,30 @@ def start(update: telegram.Update, context: CallbackContext):
     text = menus.menu()
     update.message.reply_text(text, reply_markup=telegram.ReplyKeyboardRemove())
 
+@utils.whitelist
+def torrent1(update: telegram.Update, context: CallbackContext):
+    text = "Test1 " + str(update.message.text)
+    print(text)
+    torrent_info = str(update.message.text).split("_")
+    print(torrent_info)
+    if len(torrent_info)<2:
+        text = "Error torrent id"
+        update.message.reply_text(text, reply_markup=telegram.ReplyKeyboardRemove())
+        return
+    torrent_id = int(torrent_info[1])
+    try:
+        print(text)
+        text, reply_markup = menus.torrent_menu(torrent_id)
+    except KeyError:
+        text, reply_markup = menus.get_torrents()
+        print("Error")
+        print(text)
+        update.message.reply_text(text=text, reply_markup=reply_markup, parse_mode="MarkdownV2")
+    except Exception as er:
+        print(er)
+    else:
+        update.message.reply_text(text=text, reply_markup=reply_markup, parse_mode="MarkdownV2")
+    #update.message.reply_text(text, reply_markup=telegram.ReplyKeyboardRemove())
 
 @utils.whitelist
 def add(update: telegram.Update, context: CallbackContext):
@@ -34,10 +57,12 @@ def memory(update: telegram.Update, context: CallbackContext):
 
 @utils.whitelist
 def get_torrents_command(update: telegram.Update, context: CallbackContext):
-    torrent_list, keyboard = menus.get_torrents()
-    update.message.reply_text(
-        torrent_list, reply_markup=keyboard, parse_mode="MarkdownV2"
-    )
+    try:
+        torrent_list, keyboard = menus.get_torrents()
+    except Exception as er:
+        print(er)
+    else:    
+        update.message.reply_text(torrent_list, reply_markup=keyboard, parse_mode="MarkdownV2")
 
 
 @utils.whitelist
@@ -109,13 +134,18 @@ def torrent_files_inline(update: telegram.Update, context: CallbackContext):
     callback = query.data.split("_")
     torrent_id = int(callback[1])
     try:
-        text, reply_markup = menus.get_files(torrent_id)
-    except KeyError:
+        list_text = menus.get_files(torrent_id)
+    except KeyError as er:
+        print("KeyError:",er)
         query.answer(text="Torrent no longer exists")
-        text, reply_markup = menus.get_torrents()
-        query.edit_message_text(
-            text=text, reply_markup=reply_markup, parse_mode="MarkdownV2"
-        )
+        #text, reply_markup = menus.get_torrents()
+        #query.edit_message_text(text=text, reply_markup=reply_markup, parse_mode="MarkdownV2")
+    except Exception as er:
+        print(er)
+        text = er
+        reply_markup = telegram.ReplyKeyboardRemove()
+        query.edit_message_text(text=text, reply_markup=reply_markup, parse_mode="MarkdownV2")
+    
     else:
         if len(callback) == 3 and callback[2] == "reload":
             try:
@@ -126,10 +156,10 @@ def torrent_files_inline(update: telegram.Update, context: CallbackContext):
             except telegram.error.BadRequest:
                 query.answer(text="Nothing to reload")
         else:
-            query.answer()
-            query.edit_message_text(
-                text=text, reply_markup=reply_markup, parse_mode="MarkdownV2"
-            )
+            query.answer("Ok")
+            for text_info in list_text:
+                update.callback_query.message.reply_text(text=text_info["text"], reply_markup=text_info["reply_markup"], parse_mode="MarkdownV2")
+                
 
 
 @utils.whitelist
@@ -232,6 +262,15 @@ def edit_file(update: telegram.Update, context: CallbackContext):
         text=text, reply_markup=reply_markup, parse_mode="MarkdownV2"
     )
 
+@utils.whitelist
+def move_file(update: telegram.Update, context: CallbackContext):
+    query = update.callback_query
+    callback = query.data.split("_")
+    torrent_id = int(callback[1])
+    file_id = int(callback[2])
+    query.answer()
+    text, reply_markup = menus.torrent_move_file(torrent_id, file_id)
+    update.callback_query.message.reply_text(text=text, reply_markup=reply_markup, parse_mode="MarkdownV2")
 
 @utils.whitelist
 def select_for_download(update: telegram.Update, context: CallbackContext):
@@ -311,70 +350,54 @@ def change_server_inline(update: telegram.Update, context: CallbackContext):
 def error_handler(update: telegram.Update, context: CallbackContext):
     text = "Something went wrong"
     if update.callback_query:
-        query = update.callback_query
-        query.edit_message_text(
-            text=text, parse_mode="MarkdownV2"
-        )
+        #query = update.callback_query
+        #query.edit_message_text(
+        #    text=text, parse_mode="MarkdownV2"
+        #)
+        #update.message.reply_text(text)
+        #update.message.reply_text
+        logger.info(f"Error callback_query {text} ")
+        #print(update.callback_query)
     else:
         update.message.reply_text(text)
+        logger.info(f"Error {text}")
 
 
 def run():
+    global logger
+    logging.basicConfig(filename="app.log")
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.INFO)
     updater = Updater(token=config.TOKEN)
     utils.setup_updater(updater)
     updater.dispatcher.add_error_handler(error_handler)
-    updater.dispatcher.add_handler(
-        MessageHandler(Filters.document.file_extension("torrent"), torrent_file_handler)
-    )
-    updater.dispatcher.add_handler(
-        MessageHandler(Filters.regex(r"\Amagnet:\?xt=urn:btih:.*"), magnet_url_handler)
-    )
+    updater.dispatcher.add_handler(MessageHandler(Filters.document.file_extension("torrent"), torrent_file_handler))
+    updater.dispatcher.add_handler(MessageHandler(Filters.regex(r"\Amagnet:\?xt=urn:btih:.*"), magnet_url_handler))
+    updater.dispatcher.add_handler(MessageHandler(Filters.regex(r"\/tr.*"), torrent1))
     updater.dispatcher.add_handler(CommandHandler("start", start))
     updater.dispatcher.add_handler(CommandHandler("menu", start))
     updater.dispatcher.add_handler(CommandHandler("add", add))
     updater.dispatcher.add_handler(CommandHandler("memory", memory))
     updater.dispatcher.add_handler(CommandHandler("torrents", get_torrents_command))
     updater.dispatcher.add_handler(CommandHandler("settings", settings_menu_command))
-    updater.dispatcher.add_handler(
-        CallbackQueryHandler(settings_menu_inline, pattern="settings")
+    updater.dispatcher.add_handler(CallbackQueryHandler(settings_menu_inline, pattern="settings"))
+    updater.dispatcher.add_handler(CallbackQueryHandler(change_server_inline, pattern="server\\_*"))
+    updater.dispatcher.add_handler(CallbackQueryHandler(change_server_menu_inline, pattern="changeservermenu\\_*"))
+    updater.dispatcher.add_handler(CallbackQueryHandler(torrent_adding, pattern="addmenu\\_*"))
+    updater.dispatcher.add_handler(CallbackQueryHandler(select_file, pattern="fileselect\\_*"))
+    updater.dispatcher.add_handler(CallbackQueryHandler(select_for_download, pattern="selectfiles\\_*"))
+    updater.dispatcher.add_handler(CallbackQueryHandler(edit_file, pattern="editfile\\_*"))
+    updater.dispatcher.add_handler(CallbackQueryHandler(move_file, pattern="movefile\\_*"))
+    updater.dispatcher.add_handler(CallbackQueryHandler(torrent_adding_actions, pattern="torrentadd\\_*"))
+    updater.dispatcher.add_handler(CallbackQueryHandler(torrent_files_inline, pattern="gettrfiles\\_*")
     )
-    updater.dispatcher.add_handler(
-        CallbackQueryHandler(change_server_inline, pattern="server\\_*")
+    updater.dispatcher.add_handler(CallbackQueryHandler(delete_torrent_inline, pattern="deletemenutorrent\\_*")
     )
-    updater.dispatcher.add_handler(
-        CallbackQueryHandler(change_server_menu_inline, pattern="changeservermenu\\_*")
+    updater.dispatcher.add_handler(CallbackQueryHandler(delete_torrent_action_inline, pattern="deletetorrent\\_*")
     )
-    updater.dispatcher.add_handler(
-        CallbackQueryHandler(torrent_adding, pattern="addmenu\\_*")
+    updater.dispatcher.add_handler(CallbackQueryHandler(get_torrents_inline, pattern="torrentsgoto\\_*")
     )
-    updater.dispatcher.add_handler(
-        CallbackQueryHandler(select_file, pattern="fileselect\\_*")
-    )
-    updater.dispatcher.add_handler(
-        CallbackQueryHandler(select_for_download, pattern="selectfiles\\_*")
-    )
-    updater.dispatcher.add_handler(
-        CallbackQueryHandler(edit_file, pattern="editfile\\_*")
-    )
-    updater.dispatcher.add_handler(
-        CallbackQueryHandler(torrent_adding_actions, pattern="torrentadd\\_*")
-    )
-    updater.dispatcher.add_handler(
-        CallbackQueryHandler(torrent_files_inline, pattern="torrentsfiles\\_*")
-    )
-    updater.dispatcher.add_handler(
-        CallbackQueryHandler(delete_torrent_inline, pattern="deletemenutorrent\\_*")
-    )
-    updater.dispatcher.add_handler(
-        CallbackQueryHandler(delete_torrent_action_inline, pattern="deletetorrent\\_*")
-    )
-    updater.dispatcher.add_handler(
-        CallbackQueryHandler(get_torrents_inline, pattern="torrentsgoto\\_*")
-    )
-    updater.dispatcher.add_handler(
-        CallbackQueryHandler(torrent_menu_inline, pattern="torrent\\_*")
+    updater.dispatcher.add_handler(CallbackQueryHandler(torrent_menu_inline, pattern="torrent\\_*")
     )
     updater.bot.set_my_commands(
         [
